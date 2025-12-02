@@ -185,3 +185,4 @@ Chinook.db
 
 examples/rag/langgraph_agentic_rag/data
 examples/rag/langgraph_agentic_rag/chroma_db
+examples/rag/logs
