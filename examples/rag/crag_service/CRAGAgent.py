@@ -299,7 +299,6 @@ class CRAGAgent:
             steps.append("grade_document_retrieval")
 
             filtered_docs = []
-            search = "No"
 
             print("documents 的个数:", len(documents))
             for d in documents:
@@ -311,13 +310,9 @@ class CRAGAgent:
 
                 if grade in ["1", "yes", "Yes", 1, True]:
                     filtered_docs.append(d)
-                else:
-                    search = "Yes"  # 有不相关文档,触发 web search
-
             return {
                 "documents": filtered_docs,
                 "question": question,
-                "search": search,
                 "steps": steps,
             }
 
@@ -353,16 +348,19 @@ class CRAGAgent:
                 "steps": steps,
             }
 
-        # ✅ 修复:决策函数只返回下一步的节点名
+        # 决策函数只返回下一步的节点名
         def decide_to_generate(state):
             """决定是 web search 还是直接生成答案"""
-            search = state.get("search", "No")
+            # filtered_docs为空时，触发 web search
+            documents = state["documents"]
+            search = "Yes" if len(documents) == 0 else "No"
+            print(f"决策: documents 数量={len(documents)}, search={search}")
             if search == "Yes":
                 return "search"  # 需要 web search
             else:
                 return "generate"  # 直接生成答案
 
-        # ✅ 修复:构建图时确保流程单向
+        # 构建图时确保流程单向
         workflow = StateGraph(GraphState)
         workflow.add_node("retrieve", retrieve)
         workflow.add_node("grade_documents", grade_documents)
@@ -373,7 +371,7 @@ class CRAGAgent:
         workflow.add_edge(START, "retrieve")
         workflow.add_edge("retrieve", "grade_documents")
 
-        # ✅ 关键:条件边只有两个出口,不会循环回 retrieve
+        # 关键:条件边只有两个出口,不会循环回 retrieve
         workflow.add_conditional_edges(
             "grade_documents",
             decide_to_generate,
@@ -405,7 +403,6 @@ class CRAGAgent:
 
 # ==================== Standalone Testing ====================
 if __name__ == "__main__":
-    import sys
 
     print("=== CRAG Agent Standalone Test ===\n")
     import os
@@ -427,9 +424,7 @@ if __name__ == "__main__":
     CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./chroma_db")
     # 初始化 Agent
     print("初始化 CRAG Agent...")
-    agent = CRAGAgent(
-        chroma_db_dir=CHROMA_DB_DIR,
-    )
+    agent = CRAGAgent()
     print("Agent 初始化成功\n")
 
     # 测试查询
