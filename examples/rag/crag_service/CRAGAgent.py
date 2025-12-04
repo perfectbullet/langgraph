@@ -334,17 +334,18 @@ class CRAGAgent:
             return {"documents": documents, "question": question, "steps": steps}
 
         def generate(state):
-            """生成最终答案（占位，实际生成在流式方法中）"""
+            """生成最终答案（占位符，实际生成在流式方法中）"""
             question = state["question"]
             documents = state["documents"]
             steps = state.get("steps", [])
             steps.append("generate_answer")
             
             # 返回空生成（实际生成在 invoke/stream 方法中完成）
+            # 注意：这个节点只是占位符，用于标记流程到达生成阶段
             return {
                 "documents": documents,
                 "question": question,
-                "generation": "",  # 占位
+                "generation": "",  # 占位符：实际生成在外部方法中
                 "steps": steps,
             }
 
@@ -442,7 +443,8 @@ class CRAGAgent:
             if "documents" in event:
                 collected_docs = event["documents"]
 
-            # 当到达 generate 阶段且尚未流式输出时，进行真正的流式生成
+            # 当到达 generate 阶段且有文档时，进行真正的流式生成
+            # 注意：collected_docs 应该始终存在（来自检索或 web 搜索）
             if should_generate and collected_docs:
                 should_generate = False  # 只生成一次
                 # 真正的流式输出：直接从 LLM 流式生成
@@ -492,6 +494,7 @@ class CRAGAgent:
             if "documents" in event:
                 collected_docs = event["documents"]
 
+            # 当到达 generate 阶段且有文档时，进行真正的流式生成
             if should_generate and collected_docs:
                 should_generate = False
                 # 异步流式生成
