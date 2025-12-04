@@ -334,18 +334,18 @@ class CRAGAgent:
             return {"documents": documents, "question": question, "steps": steps}
 
         def generate(state):
-            """生成最终答案"""
+            """生成最终答案（占位符，实际生成在流式方法中）"""
             question = state["question"]
             documents = state["documents"]
-            generation = self.rag_chain.invoke(
-                {"documents": documents, "question": question}
-            )
             steps = state.get("steps", [])
             steps.append("generate_answer")
+            
+            # 返回空生成（实际生成在 invoke/stream 方法中完成）
+            # 注意：这个节点只是占位符，用于标记流程到达生成阶段
             return {
                 "documents": documents,
                 "question": question,
-                "generation": generation,
+                "generation": "",  # 占位符：实际生成在外部方法中
                 "steps": steps,
             }
 
@@ -392,8 +392,16 @@ class CRAGAgent:
         """执行 CRAG 查询（非流式）"""
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
         state_dict = self.graph.invoke({"question": question, "steps": []}, config)
+        
+        # 执行实际的生成（因为 generate 节点只是占位）
+        generation = "".join(
+            self.rag_chain.stream(
+                {"documents": state_dict["documents"], "question": question}
+            )
+        )
+        
         return {
-            "response": state_dict["generation"],
+            "response": generation,
             "steps": state_dict["steps"],
             "documents": [
                 {"content": d.page_content, "metadata": d.metadata}
@@ -403,7 +411,7 @@ class CRAGAgent:
 
     def stream(self, question: str) -> Iterator[Dict[str, Any]]:
         """
-        执行 CRAG 查询（流式输出）
+        执行 CRAG 查询（真正的流式输出）
 
         Yields:
             dict: 包含 type 和 content 的流式数据
@@ -412,34 +420,37 @@ class CRAGAgent:
         """
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
-        # 第一步：流式执行图节点
         collected_steps = []
         collected_docs = []
+        should_generate = False
 
+        # 使用 stream_mode="values" 监控状态变化
         for event in self.graph.stream(
             {"question": question, "steps": []}, config, stream_mode="values"
         ):
             # 发送步骤信息
             if "steps" in event and event["steps"]:
-                current_step = event["steps"][-1]
-                if current_step not in collected_steps:
-                    collected_steps.append(current_step)
-                    yield {"type": "step", "content": current_step}
+                for step in event["steps"]:
+                    if step not in collected_steps:
+                        collected_steps.append(step)
+                        yield {"type": "step", "content": step}
+                        
+                        # 当检测到 generate_answer 步骤时，准备流式生成
+                        if step == "generate_answer":
+                            should_generate = True
 
             # 收集文档信息
             if "documents" in event:
                 collected_docs = event["documents"]
 
-            # 如果到达 generate 节点，开始流式输出生成内容
-            if "generation" in event and event.get("generation"):
-                # 注意：这里 event["generation"] 是完整字符串
-                # 如果需要真正的 token 级流式，需要修改 generate 节点
-                generation = event["generation"]
-
-                # 模拟分块发送（实际应在 generate 节点中使用流式 LLM）
-                chunk_size = 10  # 每次发送 10 个字符
-                for i in range(0, len(generation), chunk_size):
-                    chunk = generation[i : i + chunk_size]
+            # 当到达 generate 阶段且有文档时，进行真正的流式生成
+            # 注意：collected_docs 应该始终存在（来自检索或 web 搜索）
+            if should_generate and collected_docs:
+                should_generate = False  # 只生成一次
+                # 真正的流式输出：直接从 LLM 流式生成
+                for chunk in self.rag_chain.stream(
+                    {"documents": collected_docs, "question": question}
+                ):
                     yield {"type": "chunk", "content": chunk}
 
         # 发送元数据
@@ -460,30 +471,36 @@ class CRAGAgent:
 
     async def astream(self, question: str) -> AsyncIterator[Dict[str, Any]]:
         """
-        异步流式执行（用于 FastAPI）
+        异步流式执行（真正的流式输出，用于 FastAPI）
         """
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
         collected_steps = []
         collected_docs = []
+        should_generate = False
 
         async for event in self.graph.astream(
             {"question": question, "steps": []}, config, stream_mode="values"
         ):
             if "steps" in event and event["steps"]:
-                current_step = event["steps"][-1]
-                if current_step not in collected_steps:
-                    collected_steps.append(current_step)
-                    yield {"type": "step", "content": current_step}
+                for step in event["steps"]:
+                    if step not in collected_steps:
+                        collected_steps.append(step)
+                        yield {"type": "step", "content": step}
+                        
+                        if step == "generate_answer":
+                            should_generate = True
 
             if "documents" in event:
                 collected_docs = event["documents"]
 
-            if "generation" in event and event.get("generation"):
-                generation = event["generation"]
-                chunk_size = 10
-                for i in range(0, len(generation), chunk_size):
-                    chunk = generation[i : i + chunk_size]
+            # 当到达 generate 阶段且有文档时，进行真正的流式生成
+            if should_generate and collected_docs:
+                should_generate = False
+                # 异步流式生成
+                async for chunk in self.rag_chain.astream(
+                    {"documents": collected_docs, "question": question}
+                ):
                     yield {"type": "chunk", "content": chunk}
 
         yield {
