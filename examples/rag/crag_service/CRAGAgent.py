@@ -334,26 +334,17 @@ class CRAGAgent:
             return {"documents": documents, "question": question, "steps": steps}
 
         def generate(state):
-            """生成最终答案（流式）"""
+            """生成最终答案（占位，实际生成在流式方法中）"""
             question = state["question"]
             documents = state["documents"]
             steps = state.get("steps", [])
             steps.append("generate_answer")
             
-            # 使用流式生成
-            generation_chunks = []
-            for chunk in self.rag_chain.stream(
-                {"documents": documents, "question": question}
-            ):
-                generation_chunks.append(chunk)
-            
-            # 合并所有块作为最终结果（用于非流式调用）
-            generation = "".join(generation_chunks)
-            
+            # 返回空生成（实际生成在 invoke/stream 方法中完成）
             return {
                 "documents": documents,
                 "question": question,
-                "generation": generation,
+                "generation": "",  # 占位
                 "steps": steps,
             }
 
@@ -400,8 +391,16 @@ class CRAGAgent:
         """执行 CRAG 查询（非流式）"""
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
         state_dict = self.graph.invoke({"question": question, "steps": []}, config)
+        
+        # 执行实际的生成（因为 generate 节点只是占位）
+        generation = "".join(
+            self.rag_chain.stream(
+                {"documents": state_dict["documents"], "question": question}
+            )
+        )
+        
         return {
-            "response": state_dict["generation"],
+            "response": generation,
             "steps": state_dict["steps"],
             "documents": [
                 {"content": d.page_content, "metadata": d.metadata}
@@ -422,34 +421,35 @@ class CRAGAgent:
 
         collected_steps = []
         collected_docs = []
-        generation_started = False
+        should_generate = False
 
-        # 使用 stream_mode="updates" 以获取节点更新
+        # 使用 stream_mode="values" 监控状态变化
         for event in self.graph.stream(
-            {"question": question, "steps": []}, config, stream_mode="updates"
+            {"question": question, "steps": []}, config, stream_mode="values"
         ):
-            # event 格式: {node_name: state_update}
-            for node_name, state_update in event.items():
-                # 发送步骤信息
-                if "steps" in state_update and state_update["steps"]:
-                    for step in state_update["steps"]:
-                        if step not in collected_steps:
-                            collected_steps.append(step)
-                            yield {"type": "step", "content": step}
+            # 发送步骤信息
+            if "steps" in event and event["steps"]:
+                for step in event["steps"]:
+                    if step not in collected_steps:
+                        collected_steps.append(step)
+                        yield {"type": "step", "content": step}
+                        
+                        # 当检测到 generate_answer 步骤时，准备流式生成
+                        if step == "generate_answer":
+                            should_generate = True
 
-                # 收集文档信息
-                if "documents" in state_update:
-                    collected_docs = state_update["documents"]
+            # 收集文档信息
+            if "documents" in event:
+                collected_docs = event["documents"]
 
-                # 处理 generate 节点的流式输出
-                if node_name == "generate" and not generation_started:
-                    generation_started = True
-                    # 在 generate 节点执行时，直接从 rag_chain 流式获取输出
-                    # 这需要重新执行流式生成
-                    for chunk in self.rag_chain.stream(
-                        {"documents": collected_docs, "question": question}
-                    ):
-                        yield {"type": "chunk", "content": chunk}
+            # 当到达 generate 阶段且尚未流式输出时，进行真正的流式生成
+            if should_generate and collected_docs:
+                should_generate = False  # 只生成一次
+                # 真正的流式输出：直接从 LLM 流式生成
+                for chunk in self.rag_chain.stream(
+                    {"documents": collected_docs, "question": question}
+                ):
+                    yield {"type": "chunk", "content": chunk}
 
         # 发送元数据
         yield {
@@ -475,28 +475,30 @@ class CRAGAgent:
 
         collected_steps = []
         collected_docs = []
-        generation_started = False
+        should_generate = False
 
         async for event in self.graph.astream(
-            {"question": question, "steps": []}, config, stream_mode="updates"
+            {"question": question, "steps": []}, config, stream_mode="values"
         ):
-            for node_name, state_update in event.items():
-                if "steps" in state_update and state_update["steps"]:
-                    for step in state_update["steps"]:
-                        if step not in collected_steps:
-                            collected_steps.append(step)
-                            yield {"type": "step", "content": step}
+            if "steps" in event and event["steps"]:
+                for step in event["steps"]:
+                    if step not in collected_steps:
+                        collected_steps.append(step)
+                        yield {"type": "step", "content": step}
+                        
+                        if step == "generate_answer":
+                            should_generate = True
 
-                if "documents" in state_update:
-                    collected_docs = state_update["documents"]
+            if "documents" in event:
+                collected_docs = event["documents"]
 
-                if node_name == "generate" and not generation_started:
-                    generation_started = True
-                    # 异步流式生成
-                    async for chunk in self.rag_chain.astream(
-                        {"documents": collected_docs, "question": question}
-                    ):
-                        yield {"type": "chunk", "content": chunk}
+            if should_generate and collected_docs:
+                should_generate = False
+                # 异步流式生成
+                async for chunk in self.rag_chain.astream(
+                    {"documents": collected_docs, "question": question}
+                ):
+                    yield {"type": "chunk", "content": chunk}
 
         yield {
             "type": "metadata",
