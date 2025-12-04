@@ -188,3 +188,4 @@ examples/rag/langgraph_agentic_rag/chroma_db
 examples/rag/logs
 examples/rag/chroma_db_for_self_rag
 chroma_db_for_crag_local_zenking
+examples/rag/crag_service/1.json
