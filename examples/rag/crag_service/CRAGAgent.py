@@ -15,6 +15,7 @@ from langchain_core.prompts import PromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
+from typing import AsyncIterator, Iterator
 
 # ==================== Embedding 实现 ====================
 class SiliconFlowEmbeddings(Embeddings):
@@ -388,7 +389,7 @@ class CRAGAgent:
         return workflow.compile()
 
     def invoke(self, question: str) -> Dict[str, Any]:
-        """执行 CRAG 查询"""
+        """执行 CRAG 查询（非流式）"""
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
         state_dict = self.graph.invoke({"question": question, "steps": []}, config)
         return {
@@ -399,6 +400,121 @@ class CRAGAgent:
                 for d in state_dict.get("documents", [])
             ],
         }
+
+    def stream(self, question: str) -> Iterator[Dict[str, Any]]:
+        """
+        执行 CRAG 查询（流式输出）
+        
+        Yields:
+            dict: 包含 type 和 content 的流式数据
+                - type: "step" | "chunk" | "metadata" | "done"
+                - content: 对应的数据
+        """
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+        
+        # 第一步：流式执行图节点
+        collected_steps = []
+        collected_docs = []
+        final_question = question
+        
+        for event in self.graph.stream(
+            {"question": question, "steps": []}, 
+            config,
+            stream_mode="values"
+        ):
+            # 发送步骤信息
+            if "steps" in event and event["steps"]:
+                current_step = event["steps"][-1]
+                if current_step not in collected_steps:
+                    collected_steps.append(current_step)
+                    yield {
+                        "type": "step",
+                        "content": current_step
+                    }
+            
+            # 收集文档信息
+            if "documents" in event:
+                collected_docs = event["documents"]
+            
+            # 如果到达 generate 节点，开始流式输出生成内容
+            if "generation" in event and event.get("generation"):
+                # 注意：这里 event["generation"] 是完整字符串
+                # 如果需要真正的 token 级流式，需要修改 generate 节点
+                generation = event["generation"]
+                
+                # 模拟分块发送（实际应在 generate 节点中使用流式 LLM）
+                chunk_size = 10  # 每次发送 10 个字符
+                for i in range(0, len(generation), chunk_size):
+                    chunk = generation[i:i + chunk_size]
+                    yield {
+                        "type": "chunk",
+                        "content": chunk
+                    }
+        
+        # 发送元数据
+        yield {
+            "type": "metadata",
+            "content": {
+                "steps": collected_steps,
+                "documents_count": len(collected_docs),
+                "documents": [
+                    {"content": d.page_content[:200], "metadata": d.metadata}
+                    for d in collected_docs
+                ]
+            }
+        }
+        
+        # 发送完成标志
+        yield {
+            "type": "done",
+            "content": None
+        }
+
+    async def astream(self, question: str) -> AsyncIterator[Dict[str, Any]]:
+        """
+        异步流式执行（用于 FastAPI）
+        """
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+        
+        collected_steps = []
+        collected_docs = []
+        
+        async for event in self.graph.astream(
+            {"question": question, "steps": []},
+            config,
+            stream_mode="values"
+        ):
+            if "steps" in event and event["steps"]:
+                current_step = event["steps"][-1]
+                if current_step not in collected_steps:
+                    collected_steps.append(current_step)
+                    yield {
+                        "type": "step",
+                        "content": current_step
+                    }
+            
+            if "documents" in event:
+                collected_docs = event["documents"]
+            
+            if "generation" in event and event.get("generation"):
+                generation = event["generation"]
+                chunk_size = 10
+                for i in range(0, len(generation), chunk_size):
+                    chunk = generation[i:i + chunk_size]
+                    yield {
+                        "type": "chunk",
+                        "content": chunk
+                    }
+        
+        yield {
+            "type": "metadata",
+            "content": {
+                "steps": collected_steps,
+                "documents_count": len(collected_docs),
+            }
+        }
+        
+        yield {"type": "done", "content": None}
 
 
 # ==================== Standalone Testing ====================
