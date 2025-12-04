@@ -9,8 +9,9 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 
-from .CRAGAgent import (
+from CRAGAgent import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     CRAGAgent,
@@ -33,16 +34,14 @@ def get_agent() -> CRAGAgent:
     """获取或初始化 Agent"""
     global agent
     if agent is None:
-        chroma_db_dir = os.getenv("CHROMA_DB_DIR", "chroma_db_for_crag_local_zenking")
-        agent = CRAGAgent(
-            chroma_db_dir=chroma_db_dir,
-            embedding_base_url=os.getenv(
-                "EMBEDDING_BASE_URL", "http://192.168.8.230:50009"
-            ),
-            ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://192.168.8.231:11434"),
-        )
+        agent = CRAGAgent()
     return agent
 
+@app.get("/")
+async def root():
+    """重定向到 API 文档"""
+    return RedirectResponse(url="/docs")
+    
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():

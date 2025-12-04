@@ -1,4 +1,3 @@
-# filepath: d:\ai_works\langgraph\examples\rag\crag_service\CRAGAgent.py
 import os
 from pathlib import Path
 import uuid
@@ -18,14 +17,11 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 # ==================== Embedding 实现 ====================
-
-
 class SiliconFlowEmbeddings(Embeddings):
     def __init__(self, model: str, api_key: str, base_url: str, batch_size: int = 32):
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
-        print('embeddings url ', base_url)
         self.batch_size = batch_size
 
     def _embed_batch(self, texts: List[str]) -> List[List[float]]:
@@ -157,52 +153,57 @@ class CRAGAgent:
     """纠正性检索增强生成智能体"""
 
     def __init__(
-        self,
-        chroma_db_dir: str,
-        embedding_model: str = "BAAI/bge-large-zh-v1.5",
-        embedding_base_url: str = "http://localhost:50009",
-        embedding_api_key: str = None,
-        ollama_model: str = "qwen3:32b",
-        ollama_base_url: str = "http://192.168.8.231:11434",
+        self
     ):
         # 加载环境变量
         load_dotenv()
 
-        # 初始化配置
-        self.ollama_model = ollama_model
-        self.ollama_base_url = ollama_base_url
-        self.embedding_api_key = embedding_api_key
-
         # 初始化 Embedding
-        self.embedding = SiliconFlowEmbeddings(
-            model=embedding_model,
-            base_url=embedding_base_url,
-            api_key=embedding_api_key,
+        # self.embedding = SiliconFlowEmbeddings(
+        #     model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5"),
+        #     base_url=os.getenv("EMBEDDING_API_URL", "http://localhost:50009"),
+        #     api_key=os.environ.get("SILICONFLOW_API_KEY", None),
+        # )
+        self.embedding = OpenAIStyleEmbeddings(
+            model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5"),
+            base_url=os.getenv("EMBEDDING_BASE_URL", "http://localhost:50009"),
         )
 
         # 加载向量数据库
+        chroma_db_dir = os.getenv("CHROMA_DB_DIR", "chroma_db_for_crag_local_zenking")
         self.vectorstore = self._load_vectorstore(chroma_db_dir)
         self.retriever = self.vectorstore.as_retriever(k=4)
 
-        # 初始化 LLM
-        # self.llm = ChatOllama(
-        #     model=ollama_model,
-        #     format="json",
-        #     temperature=0,
-        #     base_url=ollama_base_url,
-        # )
-        # self.llm = ChatOpenAI(
-        #     base_url = self.ollama_base_url, 
-        #     api_key=os.environ['SILICONFLOW_API_KEY'], 
-        #     model="deepseek-ai/DeepSeek-V3.1-Terminus", temperature=0, streaming=True
-        # )
-        self.llm = ChatOpenAI(
-            base_url = "https://api.siliconflow.cn/v1", 
-            api_key=os.environ['SILICONFLOW_API_KEY'], 
-            model="deepseek-ai/DeepSeek-V3.1-Terminus", 
-            temperature=0, 
-            streaming=True
-        )
+        if os.environ['USE_OLLAMA']:
+            # 初始化 LLM
+            self.llm = ChatOllama(
+                base_url=os.environ['OLLAMA_BASE_URL'],
+                model=os.environ['OLLAMA_MODEL'],
+                temperature=0,
+                streaming=True,
+            )
+
+            self.grader_llm = ChatOllama(
+                base_url=os.environ['OLLAMA_BASE_URL'],
+                model=os.environ.get('OLLAMA_GRADER_MODEL', 'qwen2.5:7b'),  # 小模型
+                temperature=0,  # 
+                format="json",  # 强制 JSON
+            )
+        else:
+            self.llm = ChatOpenAI(
+                base_url = "https://api.siliconflow.cn/v1", 
+                api_key=os.environ['SILICONFLOW_API_KEY'], 
+                model="deepseek-ai/DeepSeek-V3.1-Terminus", 
+                temperature=0, 
+                streaming=True
+            )
+            self.grader_llm = ChatOpenAI(
+                base_url="https://api.siliconflow.cn/v1",
+                api_key=os.environ['SILICONFLOW_API_KEY'],
+                model="deepseek-ai/DeepSeek-V3",  # 非推理版本，快速评分
+                temperature=0,
+                model_kwargs={"response_format": {"type": "json_object"}},
+            )
 
         # 初始化 Web 搜索工具
         self.web_search_tool = TavilySearchResults(k=3)
@@ -424,20 +425,10 @@ if __name__ == "__main__":
 
     # 配置参数
     CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./chroma_db")
-    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
-    EMBEDDING_BASE_URL = os.getenv("EMBEDDING_API_URL", "http://localhost:50009")
-    OLLAMA_MODEL = os.getenv("LLM_MODEL", "qwen3:32b")
-    OLLAMA_BASE_URL = os.getenv("EMBEDDING_API_URL", "http://192.168.8.231:11434")
-    EMBEDDING_API_KEY = os.environ.get("SILICONFLOW_API_KEY", None)
     # 初始化 Agent
     print("初始化 CRAG Agent...")
     agent = CRAGAgent(
         chroma_db_dir=CHROMA_DB_DIR,
-        embedding_model=EMBEDDING_MODEL,
-        embedding_base_url=EMBEDDING_BASE_URL,
-        ollama_model=OLLAMA_MODEL,
-        ollama_base_url=OLLAMA_BASE_URL,
-        embedding_api_key=EMBEDDING_API_KEY,
     )
     print("Agent 初始化成功\n")
 
