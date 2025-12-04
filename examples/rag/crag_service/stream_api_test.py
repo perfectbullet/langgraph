@@ -16,14 +16,14 @@ for query in querys:
         for line in response.iter_lines():
             if line:
                 line = line.decode('utf-8')
-                print(line)
-                # if line.startswith('data: '):
-                #     data = line[6:]
-                #     if data != '[DONE]':
-                #         chunk = json.loads(data)
-                #         content = chunk['choices'][0]['delta'].get('content', '')
-                #         if content:
-                #             print(content, end='', flush=True)
-
+                # print(line)
+                if line.startswith('data: '):
+                    data = line[6:]
+                    if data != '[DONE]':
+                        chunk = json.loads(data)
+                        content = chunk['choices'][0]['delta'].get('content', '')
+                        if content:
+                            print(content, end='', flush=True)
+        print()
 
 
