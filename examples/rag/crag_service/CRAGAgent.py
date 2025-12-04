@@ -568,5 +568,5 @@ if __name__ == "__main__":
                 content_preview = doc["content"][:100].replace("\n", " ")
                 print(f"  {idx}. {content_preview}...")
 
-
     print("\n\n✓ 测试完成")
+    

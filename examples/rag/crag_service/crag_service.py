@@ -56,7 +56,6 @@ async def health_check():
     )
 
 
-
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     """
@@ -124,9 +123,6 @@ async def chat_completions(request: ChatCompletionRequest):
 async def completions(request: ChatCompletionRequest):
     """兼容 /v1/completions 接口"""
     return await chat_completions(request)
-
-
-
 
 
 async def stream_openai_response(agent: CRAGAgent, question: str, model: str):
