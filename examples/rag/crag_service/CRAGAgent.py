@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 from typing import AsyncIterator, Iterator
 
+
 # ==================== Embedding 实现 ====================
 class SiliconFlowEmbeddings(Embeddings):
     def __init__(self, model: str, api_key: str, base_url: str, batch_size: int = 32):
@@ -29,7 +30,7 @@ class SiliconFlowEmbeddings(Embeddings):
         payload = {"model": self.model, "input": texts}
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
         response = requests.post(self.base_url, json=payload, headers=headers)
         print(response)
@@ -44,13 +45,14 @@ class SiliconFlowEmbeddings(Embeddings):
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         embeddings: List[List[float]] = []
         for i in range(0, len(texts), self.batch_size):
-            batch = texts[i:i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
             embeddings.extend(self._embed_batch(batch))
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:
         return self.embed_documents([text])[0]
-    
+
+
 class OpenAIStyleEmbeddings(Embeddings):
     """适配 OpenAI /v1/embeddings 风格接口的嵌入实现"""
 
@@ -153,9 +155,7 @@ class HealthResponse(BaseModel):
 class CRAGAgent:
     """纠正性检索增强生成智能体"""
 
-    def __init__(
-        self
-    ):
+    def __init__(self):
         # 加载环境变量
         load_dotenv()
 
@@ -175,32 +175,32 @@ class CRAGAgent:
         self.vectorstore = self._load_vectorstore(chroma_db_dir)
         self.retriever = self.vectorstore.as_retriever(k=4)
 
-        if os.environ['USE_OLLAMA']:
+        if os.environ["USE_OLLAMA"]:
             # 初始化 LLM
             self.llm = ChatOllama(
-                base_url=os.environ['OLLAMA_BASE_URL'],
-                model=os.environ['OLLAMA_MODEL'],
+                base_url=os.environ["OLLAMA_BASE_URL"],
+                model=os.environ["OLLAMA_MODEL"],
                 temperature=0,
                 streaming=True,
             )
 
             self.grader_llm = ChatOllama(
-                base_url=os.environ['OLLAMA_BASE_URL'],
-                model=os.environ.get('OLLAMA_GRADER_MODEL', 'qwen2.5:7b'),  # 小模型
-                temperature=0,  # 
+                base_url=os.environ["OLLAMA_BASE_URL"],
+                model=os.environ.get("OLLAMA_GRADER_MODEL", "qwen2.5:7b"),  # 小模型
+                temperature=0,  #
                 format="json",  # 强制 JSON
             )
         else:
             self.llm = ChatOpenAI(
-                base_url = "https://api.siliconflow.cn/v1", 
-                api_key=os.environ['SILICONFLOW_API_KEY'], 
-                model="deepseek-ai/DeepSeek-V3.1-Terminus", 
-                temperature=0, 
-                streaming=True
+                base_url="https://api.siliconflow.cn/v1",
+                api_key=os.environ["SILICONFLOW_API_KEY"],
+                model="deepseek-ai/DeepSeek-V3.1-Terminus",
+                temperature=0,
+                streaming=True,
             )
             self.grader_llm = ChatOpenAI(
                 base_url="https://api.siliconflow.cn/v1",
-                api_key=os.environ['SILICONFLOW_API_KEY'],
+                api_key=os.environ["SILICONFLOW_API_KEY"],
                 model="deepseek-ai/DeepSeek-V3",  # 非推理版本，快速评分
                 temperature=0,
                 model_kwargs={"response_format": {"type": "json_object"}},
@@ -230,7 +230,7 @@ class CRAGAgent:
             print(f"✓ Graph debug saved at {target}")
         except Exception as exc:
             print(f"⚠️ Unable to dump graph visualization: {exc}")
-            
+
     def _load_vectorstore(self, chroma_db_dir: str) -> Chroma:
         """加载向量数据库"""
         if not os.path.exists(chroma_db_dir) or not os.listdir(chroma_db_dir):
@@ -404,53 +404,44 @@ class CRAGAgent:
     def stream(self, question: str) -> Iterator[Dict[str, Any]]:
         """
         执行 CRAG 查询（流式输出）
-        
+
         Yields:
             dict: 包含 type 和 content 的流式数据
                 - type: "step" | "chunk" | "metadata" | "done"
                 - content: 对应的数据
         """
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-        
+
         # 第一步：流式执行图节点
         collected_steps = []
         collected_docs = []
-        final_question = question
-        
+
         for event in self.graph.stream(
-            {"question": question, "steps": []}, 
-            config,
-            stream_mode="values"
+            {"question": question, "steps": []}, config, stream_mode="values"
         ):
             # 发送步骤信息
             if "steps" in event and event["steps"]:
                 current_step = event["steps"][-1]
                 if current_step not in collected_steps:
                     collected_steps.append(current_step)
-                    yield {
-                        "type": "step",
-                        "content": current_step
-                    }
-            
+                    yield {"type": "step", "content": current_step}
+
             # 收集文档信息
             if "documents" in event:
                 collected_docs = event["documents"]
-            
+
             # 如果到达 generate 节点，开始流式输出生成内容
             if "generation" in event and event.get("generation"):
                 # 注意：这里 event["generation"] 是完整字符串
                 # 如果需要真正的 token 级流式，需要修改 generate 节点
                 generation = event["generation"]
-                
+
                 # 模拟分块发送（实际应在 generate 节点中使用流式 LLM）
                 chunk_size = 10  # 每次发送 10 个字符
                 for i in range(0, len(generation), chunk_size):
-                    chunk = generation[i:i + chunk_size]
-                    yield {
-                        "type": "chunk",
-                        "content": chunk
-                    }
-        
+                    chunk = generation[i : i + chunk_size]
+                    yield {"type": "chunk", "content": chunk}
+
         # 发送元数据
         yield {
             "type": "metadata",
@@ -460,60 +451,49 @@ class CRAGAgent:
                 "documents": [
                     {"content": d.page_content[:200], "metadata": d.metadata}
                     for d in collected_docs
-                ]
-            }
+                ],
+            },
         }
-        
+
         # 发送完成标志
-        yield {
-            "type": "done",
-            "content": None
-        }
+        yield {"type": "done", "content": None}
 
     async def astream(self, question: str) -> AsyncIterator[Dict[str, Any]]:
         """
         异步流式执行（用于 FastAPI）
         """
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-        
+
         collected_steps = []
         collected_docs = []
-        
+
         async for event in self.graph.astream(
-            {"question": question, "steps": []},
-            config,
-            stream_mode="values"
+            {"question": question, "steps": []}, config, stream_mode="values"
         ):
             if "steps" in event and event["steps"]:
                 current_step = event["steps"][-1]
                 if current_step not in collected_steps:
                     collected_steps.append(current_step)
-                    yield {
-                        "type": "step",
-                        "content": current_step
-                    }
-            
+                    yield {"type": "step", "content": current_step}
+
             if "documents" in event:
                 collected_docs = event["documents"]
-            
+
             if "generation" in event and event.get("generation"):
                 generation = event["generation"]
                 chunk_size = 10
                 for i in range(0, len(generation), chunk_size):
-                    chunk = generation[i:i + chunk_size]
-                    yield {
-                        "type": "chunk",
-                        "content": chunk
-                    }
-        
+                    chunk = generation[i : i + chunk_size]
+                    yield {"type": "chunk", "content": chunk}
+
         yield {
             "type": "metadata",
             "content": {
                 "steps": collected_steps,
                 "documents_count": len(collected_docs),
-            }
+            },
         }
-        
+
         yield {"type": "done", "content": None}
 
 
@@ -529,7 +509,7 @@ if __name__ == "__main__":
     load_dotenv()
 
     # 验证必需的环境变量是否已设置
-    required_env_vars = ["SILICONFLOW_API_KEY",  "TAVILY_API_KEY", "EMBEDDING_API_URL"]
+    required_env_vars = ["SILICONFLOW_API_KEY", "TAVILY_API_KEY", "EMBEDDING_API_URL"]
 
     for var in required_env_vars:
         if not os.environ.get(var):
@@ -554,7 +534,7 @@ if __name__ == "__main__":
     for i, question in enumerate(test_questions, 1):
         print(f"\n{'='*60}")
         print(f"测试查询 {i}: {question}")
-        print("="*60)
+        print("=" * 60)
 
         result = agent.invoke(question)
 
@@ -569,4 +549,3 @@ if __name__ == "__main__":
                 print(f"  {idx}. {content_preview}...")
 
     print("\n\n✓ 测试完成")
-    
